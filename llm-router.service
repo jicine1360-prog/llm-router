@@ -1,0 +1,14 @@
+[Unit]
+Description=LLM Router v3 (llama.cpp based)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hoony/llm-router
+ExecStart=/usr/bin/python3 /home/hoony/llm-router/app.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

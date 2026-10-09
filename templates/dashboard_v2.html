@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Router v2 - AI 게이트웨이</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Noto Sans KR',sans-serif;background:#0a0e17;color:#e0e6f0}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:#0a0e17}
+::-webkit-scrollbar-thumb{background:#1e3a5f;border-radius:3px}
+.container{max-width:1400px;margin:0 auto;padding:20px}
+
+header{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;margin-bottom:24px;background:linear-gradient(135deg,#0f1a2e,#162240);border:1px solid #1e3a5f;border-radius:16px}
+header h1{font-size:20px;font-weight:900;background:linear-gradient(90deg,#00d4ff,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+header .sub{font-size:12px;color:#6b8aaf}
+.badge{padding:4px 12px;border-radius:6px;font-size:11px;font-weight:500}
+.badge-ok{background:rgba(0,200,83,0.15);color:#00c853;border:1px solid rgba(0,200,83,0.3)}
+.badge-warn{background:rgba(255,193,7,0.15);color:#ffc107;border:1px solid rgba(255,193,7,0.3)}
+.badge-live{background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.3);animation:pulse 2s infinite}
+@keyframes pulse{0%{opacity:1}50%{opacity:0.6}100%{opacity:1}}
+
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.card{background:linear-gradient(135deg,#0f1a2e,#141e34);border:1px solid #1e3a5f;border-radius:12px;padding:18px}
+.card h3{font-size:11px;color:#4a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.card .value{font-size:26px;font-weight:700}
+.card .value.green{color:#00c853}
+.card .value.blue{color:#00d4ff}
+.card .value.yellow{color:#ffc107}
+.card .value.purple{color:#a78bfa}
+
+.section-header{display:flex;justify-content:space-between;align-items:center;margin:20px 0 12px}
+.section-header h2{font-size:15px;font-weight:700}
+.section-header .hint{font-size:11px;color:#4a6a8a}
+
+/* VRAM Bar */
+.vram-bar{height:24px;background:#0d1525;border-radius:6px;overflow:hidden;display:flex;margin-top:6px}
+.vram-seg{height:100%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;color:#fff;transition:width 0.5s}
+.vram-qwen{background:linear-gradient(90deg,#00d4ff,#0099cc)}
+.vram-coder{background:linear-gradient(90deg,#7b2ff7,#5a1fc0)}
+.vram-qwq{background:linear-gradient(90deg,#ff6b6b,#cc4444)}
+.vram-vl{background:linear-gradient(90deg,#ffc107,#cc9900)}
+.vram-gemma{background:linear-gradient(90deg,#00c853,#009940)}
+.vram-free{background:#1a2a40}
+
+/* Models Grid */
+.models-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:20px}
+.model-card{background:#0d1525;border:1px solid #1a2a40;border-radius:10px;padding:14px;position:relative;overflow:hidden}
+.model-card .name{font-size:14px;font-weight:600}
+.model-card .caps{font-size:11px;color:#6b8aaf;margin-top:4px}
+.model-cap{display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;margin:2px}
+.model-cap.blue{background:rgba(0,212,255,0.12);color:#00d4ff}
+.model-cap.green{background:rgba(0,200,83,0.12);color:#00c853}
+.model-cap.purple{background:rgba(123,47,247,0.12);color:#a78bfa}
+.model-status{font-size:11px;margin-top:6px}
+.model-ok{color:#00c853}
+.model-warm{color:#ffc107}
+.model-down{color:#ff5252}
+.model-badge{position:absolute;top:8px;right:8px;font-size:9px;padding:2px 8px;border-radius:4px}
+.badge-resident{background:rgba(0,212,255,0.2);color:#00d4ff;border:1px solid rgba(0,212,255,0.3)}
+
+/* Meta Router Info */
+.meta-panel{background:linear-gradient(135deg,#0f1a2e,#1a1040);border:1px solid #2a1a5f;border-radius:12px;padding:18px;margin-bottom:20px}
+.meta-panel .label{font-size:11px;color:#7b2ff7;letter-spacing:2px;text-transform:uppercase}
+.meta-panel .route-info{font-size:13px;margin-top:8px;line-height:1.6}
+
+/* Voice Pipeline */
+.voice-panel{background:linear-gradient(135deg,#0f1a2e,#141e34);border:1px solid #1e3a5f;border-radius:12px;padding:18px;margin-bottom:20px}
+.voice-flow{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+.voice-step{padding:8px 16px;background:#0d1525;border:1px solid #1a2a40;border-radius:8px;font-size:12px;text-align:center;min-width:80px}
+.voice-step.active{border-color:#00d4ff;background:rgba(0,212,255,0.08)}
+.voice-arrow{color:#4a6a8a;font-size:16px}
+
+/* Log */
+.log-table{width:100%;border-collapse:collapse;font-size:12px}
+.log-table th{text-align:left;padding:8px 12px;border-bottom:1px solid #1a2a40;color:#4a6a8a;font-weight:500}
+.log-table td{padding:8px 12px;border-bottom:1px solid #0d1525}
+.log-cached{color:#ffc107}
+.log-error{color:#ff5252}
+
+.btn{padding:8px 16px;border:1px solid #1e3a5f;border-radius:6px;background:linear-gradient(135deg,#0f1a2e,#162240);color:#00d4ff;cursor:pointer;font-size:12px;font-family:inherit;transition:all 0.2s}
+.btn:hover{border-color:#00d4ff}
+.btn-danger{color:#ff5252;border-color:#3a1a1a}
+.btn-danger:hover{border-color:#ff5252}
+
+.loading{display:flex;flex-direction:column;align-items:center;padding:40px}
+.spinner{width:32px;height:32px;border:3px solid #1e3a5f;border-top-color:#00d4ff;border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <h1>LLM Router v2</h1>
+      <div class="sub">qwen3.8 메타 라우팅 · VRAM 96GB · 음성 파이프라인</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="badge badge-live" id="metaBadge">● qwen3.8 상주</span>
+      <span class="badge badge-ok" id="statusBadge">● 운용중</span>
+      <span style="font-size:11px;color:#4a6a8a">/v1/chat/completions</span>
+    </div>
+  </header>
+
+  <!-- Stats -->
+  <div class="grid" id="statsGrid">
+    <div class="card"><h3>상주 모델</h3><div class="value blue" id="residentModel">qwen3.8</div></div>
+    <div class="card"><h3>VRAM 사용</h3><div class="value green" id="vramUsage">-</div></div>
+    <div class="card"><h3>캐시 히트율</h3><div class="value yellow" id="hitRate">-</div></div>
+    <div class="card"><h3>세션 윈도우</h3><div class="value purple" id="sessionWindow">-</div></div>
+  </div>
+
+  <!-- VRAM Bar -->
+  <div class="card" style="margin-bottom:20px">
+    <h3>VRAM 할당 현황 (96GB / 6×RTX 5060 Ti)</h3>
+    <div class="vram-bar" id="vramBar"></div>
+    <div style="font-size:11px;color:#4a6a8a;margin-top:4px" id="vramLegend"></div>
+  </div>
+
+  <!-- Meta Router Panel -->
+  <div class="meta-panel">
+    <div class="label">◇ 메타 라우팅 엔진</div>
+    <div class="route-info" id="metaInfo">
+      qwen3.8이 요청을 분석 → 최적 모델 판단 → 특화 모듈 호출
+    </div>
+    <div style="margin-top:8px;gap:8px;display:flex;flex-wrap:wrap">
+      <span class="model-cap blue">qwen3.8 : 판단/일반</span>
+      <span class="model-cap purple">qwen3-coder : 코딩</span>
+      <span class="model-cap green">qwq : 수학/추론</span>
+      <span class="model-cap" style="background:rgba(255,193,7,0.12);color:#ffc107">qwen2.5vl : 이미지</span>
+    </div>
+  </div>
+
+  <!-- Models -->
+  <div class="section-header">
+    <h2>🔌 모델 상태</h2>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="refreshAll()">⟳ 새로고침</button>
+    </div>
+  </div>
+  <div class="models-grid" id="modelsGrid"></div>
+
+  <!-- Voice Pipeline -->
+  <div class="section-header">
+    <h2>🎤 음성 파이프라인</h2>
+    <span class="hint">STT(faster-whisper) → Router(qwen3.8) → TTS(edge-tts)</span>
+  </div>
+  <div class="voice-panel">
+    <div class="voice-flow">
+      <div class="voice-step active">🎤 음성 입력</div>
+      <div class="voice-arrow">→</div>
+      <div class="voice-step">STT (faster-whisper)</div>
+      <div class="voice-arrow">→</div>
+      <div class="voice-step">🤖 qwen3.8 판단</div>
+      <div class="voice-arrow">→</div>
+      <div class="voice-step">📡 특화 모듈</div>
+      <div class="voice-arrow">→</div>
+      <div class="voice-step">TTS (edge-tts)</div>
+      <div class="voice-arrow">→</div>
+      <div class="voice-step">🔊 음성 출력</div>
+    </div>
+    <div style="margin-top:12px;font-size:12px;color:#4a6a8a">
+      엔드포인트: POST /v1/audio/transcriptions (STT) · POST /v1/audio/speech (TTS) · POST /v1/voice/chat (전체 파이프라인)
+    </div>
+  </div>
+
+  <!-- Request Log -->
+  <div class="section-header">
+    <h2>📋 실시간 요청 로그</h2>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-danger" onclick="clearCache()">캐시 초기화</button>
+    </div>
+  </div>
+  <table class="log-table">
+    <thead><tr><th>시간</th><th>모델</th><th>작업 유형</th><th>상태</th></tr></thead>
+    <tbody id="logBody"></tbody>
+  </table>
+</div>
+
+<script>
+let autoRef = null
+
+function init() {
+  refreshAll()
+  if (autoRef) clearInterval(autoRef)
+  autoRef = setInterval(refreshAll, 5000)
+}
+
+async function refreshAll() {
+  await Promise.all([refreshStatus(), refreshLogs()])
+}
+
+async function refreshStatus() {
+  try {
+    const [status, config] = await Promise.all([
+      fetch('/api/status').then(r=>r.json()),
+      fetch('/api/config').then(r=>r.json()),
+    ])
+
+    const vram = status.vram || {}
+    const cache = status.cache || {}
+    const sess = status.session || {}
+
+    // Stats
+    document.getElementById('residentModel').textContent = 'qwen3.8'
+    const used = 96 - (vram.available_vram || 0)
+    const pct = ((used / 96) * 100).toFixed(0)
+    document.getElementById('vramUsage').textContent = `${used}GB / 96GB (${pct}%)`
+
+    const total = (cache.hits || 0) + (cache.misses || 0)
+    const rate = total > 0 ? ((cache.hits / total) * 100).toFixed(0) + '%' : '0%'
+    document.getElementById('hitRate').textContent = rate
+    document.getElementById('sessionWindow').textContent = (sess.window_size || 0) + ' 건'
+
+    // VRAM Bar
+    const bar = document.getElementById('vramBar')
+    const loaded = vram.loaded || {}
+    let html = ''
+    let legend = []
+    const totalGb = 96
+    let remaining = 100
+    for (const [name, info] of Object.entries(loaded)) {
+      const gb = info.vram_gb || 0
+      const p = (gb / totalGb) * 100
+      remaining -= p
+      const cls = name.includes('coder') ? 'vram-coder' :
+                  name.includes('qwq') ? 'vram-qwq' :
+                  name.includes('vl') ? 'vram-vl' :
+                  name.includes('gemma') ? 'vram-gemma' : 'vram-qwen'
+      const label = name.replace(/:latest|:.*/, '')
+      html += `<div class="vram-seg ${cls}" style="width:${p}%">${p>5?label:''}</div>`
+      legend.push(`<span style="color:#4a6a8a;margin-right:12px;font-size:11px"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${cls==='vram-coder'?'#7b2ff7':cls==='vram-qwq'?'#ff6b6b':cls==='vram-vl'?'#ffc107':cls==='vram-gemma'?'#00c853':'#00d4ff'};margin-right:4px"></span>${label} ${gb}GB</span>`)
+    }
+    if (remaining > 0) {
+      html += `<div class="vram-seg vram-free" style="width:${remaining}%">${remaining>5?'여유':''}</div>`
+    }
+    bar.innerHTML = html
+    document.getElementById('vramLegend').innerHTML = legend.join('') + `<span style="color:#4a6a8a;font-size:11px">예비 8GB</span>`
+
+    // Models
+    const grid = document.getElementById('modelsGrid')
+    const models = status.models || {}
+    grid.innerHTML = Object.entries(models).map(([name, st]) => {
+      const cfg = (config.models || {})[name] || {}
+      const caps = cfg.capabilities || []
+      const isOk = st === 'ok'
+      const isResident = cfg.keep_warm
+      const c = isOk ? 'model-ok' : 'model-down'
+      const loadedInfo = loaded[name]
+      return `<div class="model-card">
+        ${isResident ? '<span class="model-badge badge-resident">★ 상주</span>' : ''}
+        <div class="name">${name}</div>
+        <div class="caps">${caps.map(c => {
+          const cls = c==='coding'||c==='reasoning'?'purple' : c==='vision'?'yellow' : c==='general'||c==='fast'?'green' : 'blue'
+          return `<span class="model-cap ${cls}">${c}</span>`
+        }).join('')}</div>
+        <div class="model-status ${isOk?'model-ok':'model-down'}">
+          ${isOk ? '● 정상' : '○ 연결 불가'}
+          ${loadedInfo ? '· VRAM ' + loadedInfo.vram_gb + 'GB' : ''}
+          ${loadedInfo && loadedInfo.keep_for > 0 ? `· ${Math.round(loadedInfo.keep_for)}s 유지` : ''}
+        </div>
+      </div>`
+    }).join('')
+    document.getElementById('statusBadge').className = 'badge badge-ok'
+  } catch(e) {
+    document.getElementById('statusBadge').className = 'badge badge-warn'
+    document.getElementById('statusBadge').textContent = '⚠ 연결 오류'
+  }
+}
+
+async function refreshLogs() {
+  try {
+    const data = await fetch('/api/logs?limit=50').then(r=>r.json())
+    const tbody = document.getElementById('logBody')
+    tbody.innerHTML = (data.logs || []).reverse().map(log => {
+      let status = log.cached ? '캐시' : (log.error ? '오류' : '✓')
+      let cls = log.cached ? 'log-cached' : (log.error ? 'log-error' : '')
+      const t = new Date(log.time).toLocaleTimeString('ko-KR')
+      return `<tr><td>${t}</td><td>${log.model}</td><td>${log.task_type}</td><td class="${cls}">${status}</td></tr>`
+    }).join('')
+  } catch(e) {}
+}
+
+async function clearCache() {
+  if (!confirm('캐시를 초기화할까요?')) return
+  await fetch('/api/cache/clear', {method:'POST'})
+}
+
+init()
+</script>
+</body>
+</html>
