@@ -6,15 +6,15 @@ providers:
   llamacpp_main:
     type: openai_compatible
     base_url: http://127.0.0.1:8087
-    model_id: "hunmin-64k"
+    model_id: "qwen3.6-35b"
   llamacpp_vision:
     type: openai_compatible
     base_url: http://127.0.0.1:8087
-    model_id: "hunmin-64k"
+    model_id: "qwen3.6-35b"
   llamacpp_fast:
     type: openai_compatible
     base_url: http://127.0.0.1:8087
-    model_id: "hunmin-64k"
+    model_id: "qwen3.6-35b"
   hermes:
     type: hermes
     description: "Hermes agent LLM pipeline (OpenAI/Anthropic/Gemini/OpenRouter 등)"
@@ -24,9 +24,9 @@ providers:
 # 모델 정의
 # ============================================================
 models:
-  qwen3.8:                    # ★ 상주 메인 모델 (8087, 항상 GPU에 로딩됨)
+  qwen3.8:                    # ★ 상주 메인 모델 (8087, MoE 상주: qwen3.6-35b)
     provider: llamacpp_main
-    model: "hunmin-64k"
+    model: "qwen3.6-35b"
     capabilities: [general, analysis, reasoning, creative, coding, math, meta_routing]
     speed: medium
     max_tokens: 32768
@@ -34,7 +34,7 @@ models:
 
   qwen3-vl:                   # ▷ 비전 특화 (8087)
     provider: llamacpp_vision
-    model: "hunmin-64k"
+    model: "qwen3.6-35b"
     capabilities: [vision]
     speed: medium
     max_tokens: 8192
@@ -42,7 +42,7 @@ models:
 
   muse:                       # ▷ 빠른 응답 (8087)
     provider: llamacpp_fast
-    model: "hunmin-64k"
+    model: "qwen3.6-35b"
     capabilities: [general, fast]
     speed: fast
     max_tokens: 8192
