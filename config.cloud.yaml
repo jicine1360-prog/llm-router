@@ -1,0 +1,177 @@
+# ============================================================
+# LLM Router v3 - 클라우드 프로파일
+# 사용: ROUTER_CONFIG=config.cloud.yaml
+#   llama.cpp 계열 provider가 외부 OpenAI 호환 API로 연결됩니다.
+#   환경변수로 대상/모델/키를 지정하세요 (기본값: OpenAI):
+#     CLOUD_BASE_URL    기본 https://api.openai.com  (OpenRouter/Together/vLLM 등 가능)
+#     CLOUD_MODEL_MAIN  기본 gpt-4o-mini
+#     CLOUD_MODEL_VL    기본 gpt-4o
+#     CLOUD_MODEL_FAST  기본 gpt-4o-mini
+#     CLOUD_API_KEY     (필수) Bearer 토큰
+# ============================================================
+
+providers:
+  cloud_main:
+    type: openai_compatible
+    base_url: "${CLOUD_BASE_URL:-https://api.openai.com}"
+    model_id: "${CLOUD_MODEL_MAIN:-gpt-4o-mini}"
+    api_key_env: "CLOUD_API_KEY"
+  cloud_vision:
+    type: openai_compatible
+    base_url: "${CLOUD_BASE_URL:-https://api.openai.com}"
+    model_id: "${CLOUD_MODEL_VL:-gpt-4o}"
+    api_key_env: "CLOUD_API_KEY"
+  cloud_fast:
+    type: openai_compatible
+    base_url: "${CLOUD_BASE_URL:-https://api.openai.com}"
+    model_id: "${CLOUD_MODEL_FAST:-gpt-4o-mini}"
+    api_key_env: "CLOUD_API_KEY"
+  hermes:
+    type: hermes
+    description: "Hermes agent LLM pipeline (OpenAI/Anthropic/Gemini/OpenRouter 등)"
+    config_path: ~/.hermes/config.yaml
+
+# ============================================================
+# 모델 정의
+# ============================================================
+models:
+  qwen3.8:                    # ★ 메타 라우팅/일반 (클라우드 API)
+    provider: cloud_main
+    model: "${CLOUD_MODEL_MAIN:-gpt-4o-mini}"
+    capabilities: [general, analysis, reasoning, creative, coding, math, meta_routing]
+    speed: medium
+    max_tokens: 32768
+    keep_warm: false
+
+  qwen3-vl:                   # ▷ 비전 (클라우드 API)
+    provider: cloud_vision
+    model: "${CLOUD_MODEL_VL:-gpt-4o}"
+    capabilities: [vision]
+    speed: medium
+    max_tokens: 8192
+    keep_warm: false
+
+  muse:                       # ▷ 빠른 응답 (클라우드 API)
+    provider: cloud_fast
+    model: "${CLOUD_MODEL_FAST:-gpt-4o-mini}"
+    capabilities: [general, fast]
+    speed: fast
+    max_tokens: 8192
+    keep_warm: false
+
+  hermes-config:              # ▷ 외부 API (Hermes)
+    provider: hermes
+    capabilities: [general, multi_provider, external_api]
+    speed: fast
+    max_tokens: 4096
+    keep_warm: false
+    hermes_provider: null
+    hermes_model: null
+
+# ============================================================
+# 메타 라우팅 (v3 핵심)
+# 주의: enabled=true 이면 요청당 라우팅 API 호출이 1회 추가됩니다(비용/지연).
+#       클라우드에서는 fallback_classifier 만 쓰려면 enabled=false 로 두세요.
+# ============================================================
+meta_routing:
+  enabled: true
+  router_model: qwen3.8
+  keepalive_interval: 0        # 클라우드: keep-warm 불필요(비용 방지)
+  routing_prompt: |
+    You are the routing coordinator for a multi-model AI system.
+    Analyze the user's request and determine:
+
+    1. **task_type**: One of: coding, math, reasoning, vision, analysis, creative, general, multi_provider
+    2. **model**: The best model for this task:
+       - qwen3.8: general conversation, analysis, creative writing, summarization, coding, math, reasoning
+       - qwen3-vl: image analysis, visual understanding, OCR
+       - muse: fast simple responses, quick questions
+       - hermes-config: requests needing external API access (OpenAI, Anthropic, Gemini, etc.)
+    3. **confidence**: HIGH / MEDIUM / LOW
+    4. **reasoning**: One sentence explaining your choice
+    5. **complexity**: simple / moderate / complex
+
+    Rules:
+    - If the request contains code or programming context → qwen3.8
+    - If the request involves math, equations, or logical puzzles → qwen3.8
+    - If the request contains image data → qwen3-vl
+    - If the request is simple and needs a quick response → muse
+    - If the request explicitly mentions OpenAI, ChatGPT, Claude, Gemini, GPT-4, or asks for "external" or "cloud" model → hermes-config
+    - For everything else → qwen3.8 (the always-ready generalist)
+
+    Respond ONLY with valid JSON:
+    {"task_type": "...", "model": "...", "confidence": "...", "reasoning": "...", "complexity": "..."}
+
+  fallback_classifier:
+    coding_keywords: [def, class, function, import, "#include", "console.log", "print(", "return ", "```", "코드", "구현", "코딩", "debug", "error", "exception"]
+    math_keywords: [solve, equation, calculate, derivative, integral, "∑", "∫", "√", "π", "수학", "계산", "방정식", "probability"]
+    vision_keywords: [image, picture, photo, draw, "이미지", "사진", "그림"]
+    reasoning_keywords: [why, explain, reason, analyze, compare, contrast, cause, effect, "분석", "이유", "원인", "차이"]
+    external_keywords: [openai, chatgpt, claude, gemini, gpt-4, gpt4, external, cloud, "외부", "클라우드"]
+
+# ============================================================
+# 라우팅 규칙 (메타 라우팅 실패 시 폴백)
+# ============================================================
+routing:
+  rules:
+    - type: coding
+      priority: [qwen3.8, muse]
+      system_hint: "You are an expert programmer. Write clean, efficient code."
+
+    - type: math
+      priority: [qwen3.8, muse]
+      system_hint: "Solve step by step."
+
+    - type: reasoning
+      priority: [qwen3.8, muse]
+      system_hint: "Think step by step."
+
+    - type: vision
+      priority: [qwen3-vl, qwen3.8]
+      system_hint: ""
+
+    - type: analysis
+      priority: [qwen3.8, muse]
+      system_hint: "Provide detailed analysis."
+
+    - type: creative
+      priority: [qwen3.8, muse]
+      system_hint: "Be creative and engaging."
+
+    - type: multi_provider
+      priority: [hermes-config, qwen3.8]
+      system_hint: ""
+
+    - type: general
+      priority: [qwen3.8, muse]
+      system_hint: ""
+
+  timeout:
+    qwen3.8: 180
+    qwen3-vl: 120
+    muse: 60
+    hermes-config: 60
+
+# ============================================================
+# 세션 인식
+# ============================================================
+session:
+  enabled: true
+  window_size: 5
+  model_hold: 3
+  ttl: 600
+
+# ============================================================
+# 음성 파이프라인 (클라우드에서는 비활성 — 로컬 whisper/edge-tts 미사용)
+# ============================================================
+voice:
+  enabled: false
+
+# ============================================================
+# 캐시
+# ============================================================
+cache:
+  enabled: true
+  max_size: 2000
+  ttl: 3600
+  similarity_threshold: 0.85

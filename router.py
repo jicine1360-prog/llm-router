@@ -1,4 +1,5 @@
 """LLM Router v3 - llama.cpp OpenAI-compatible 기반 (ollama 의존성 제거)"""
+import os
 import json
 import re
 import time
@@ -9,9 +10,26 @@ from datetime import datetime
 from provider_hermes import call_hermes_llm, get_hermes_models
 
 
+_ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def _expand_env(obj):
+    """문자열 내 ${VAR} / ${VAR:-default} 를 환경변수로 치환 (dict/list 재귀)."""
+    if isinstance(obj, str):
+        return _ENV_RE.sub(
+            lambda m: os.environ.get(m.group(1), m.group(2) if m.group(2) is not None else ""),
+            obj,
+        )
+    if isinstance(obj, dict):
+        return {k: _expand_env(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_expand_env(v) for v in obj]
+    return obj
+
+
 def load_config(path="config.yaml"):
     with open(path) as f:
-        return yaml.safe_load(f)
+        return _expand_env(yaml.safe_load(f))
 
 
 class ModelManager:
@@ -194,9 +212,17 @@ def _call_openai_compatible(model_name, messages, temperature=0.7, max_tokens=40
     base_url = provider_cfg.get("base_url", "http://127.0.0.1:8080")
     model_id = mc.get("model", provider_cfg.get("model_id", model_name))
 
+    api_key = provider_cfg.get("api_key")
+    if not api_key and provider_cfg.get("api_key_env"):
+        api_key = os.environ.get(provider_cfg["api_key_env"])
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
     try:
         resp = requests.post(
             f"{base_url}/v1/chat/completions",
+            headers=headers,
             json={
                 "model": model_id,
                 "messages": messages,

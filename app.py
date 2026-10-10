@@ -14,7 +14,11 @@ from cache import SemanticCache
 
 app = Flask(__name__)
 _BASE = os.path.dirname(os.path.abspath(__file__))
-router = LLMRouter(config_path=os.path.join(_BASE, "config.yaml"))
+# 프로파일 선택: ROUTER_CONFIG 환경변수 (기본 config.local.yaml)
+#   로컬(hoony): config.local.yaml  (llama.cpp 8087 상주)
+#   클라우드    : config.cloud.yaml (외부 OpenAI 호환 API)
+_CONFIG_NAME = os.environ.get("ROUTER_CONFIG", "config.local.yaml")
+router = LLMRouter(config_path=os.path.join(_BASE, _CONFIG_NAME))
 cache = SemanticCache(max_size=2000, ttl=3600, threshold=0.85)
 router.start_keepalive()
 
