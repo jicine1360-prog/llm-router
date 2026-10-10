@@ -1,9 +1,12 @@
-"""LLM Router v2 - 메타 라우팅 + 음성 파이프라인 + VRAM 관리"""
+"""LLM Router v3 - 메타 라우팅 + 음성 파이프라인 + 실시간 처리 모니터"""
 import os
 import json
 import time
 import subprocess
 import tempfile
+import threading
+import itertools
+import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file
 from router import LLMRouter
@@ -17,6 +20,46 @@ router.start_keepalive()
 
 request_log = []
 MAX_LOG = 500
+
+# ============================================================
+# 실시간 처리 추적 (진행 중인 요청)
+# ============================================================
+_active = {}
+_active_lock = threading.Lock()
+_active_seq = itertools.count(1)
+
+
+def _new_active(req_model):
+    with _active_lock:
+        rid = next(_active_seq)
+        _active[rid] = {
+            "id": rid,
+            "model": req_model or "auto",
+            "task_type": "-",
+            "stage": "요청 수신",
+            "started": time.time(),
+        }
+        return rid
+
+
+def _update_active(rid, **kw):
+    with _active_lock:
+        if rid in _active:
+            _active[rid].update(kw)
+
+
+def _finish_active(rid):
+    with _active_lock:
+        return _active.pop(rid, None)
+
+
+def _active_list():
+    now = time.time()
+    with _active_lock:
+        return [
+            {**v, "elapsed": round(now - v["started"], 1)}
+            for v in _active.values()
+        ]
 
 # ============================================================
 # 웹 대시보드
@@ -69,18 +112,27 @@ def chat_completions():
             _log_request(cache_key_model, cached.get("task_type", "?"), cached=True)
             return _build_response(cached, cache_key_model, cached=True)
 
+    rid = _new_active(requested_model)
+    t0 = time.time()
+    _update_active(rid, stage="추론 중")
     try:
         result = router.route(messages, requested_model, temperature=temperature, max_tokens=max_tokens)
     except Exception as e:
+        _finish_active(rid)
         return jsonify({"error": str(e)}), 500
 
     if "error" in result and not result.get("content"):
+        _finish_active(rid)
         return jsonify({"error": result["error"]}), 503
 
     if cache_cfg.get("enabled", True) and result.get("content"):
         cache.set(messages, cache_key_model, result)
 
-    _log_request(result["model"], result.get("task_type", "?"), error="error" in result)
+    elapsed_ms = int((time.time() - t0) * 1000)
+    usage = result.get("usage", {}) or {}
+    _finish_active(rid)
+    _log_request(result["model"], result.get("task_type", "?"), error="error" in result,
+                 elapsed_ms=elapsed_ms, tokens=usage.get("completion_tokens", 0))
 
     return _build_response(result, result["model"])
 
@@ -216,15 +268,47 @@ print(' '.join(s.text for s in segments))
 @app.route("/api/status")
 def api_status():
     health = router.check_models_health()
+    vram = router.vram_status()
+    models_cfg = router.config.get("models", {})
+    for name, info in vram.get("loaded", {}).items():
+        info["vram_gb"] = models_cfg.get(name, {}).get("vram_gb", 0)
+    vram_cfg = router.config.get("vram", {})
     return jsonify({
         "status": "running",
         "uptime": time.time(),
         "models": health,
-        "vram": router.vram_status(),
+        "vram": vram,
+        "vram_total_gb": vram_cfg.get("total_gb", 96),
+        "gpu_count": vram_cfg.get("gpu_count", 6),
         "session": router.session_stats(),
         "cache": cache.stats(),
         "requests_served": len(request_log),
+        "active_count": len(_active),
     })
+
+
+@app.route("/api/active")
+def api_active():
+    """진행 중인 요청 (실시간 처리 패널용)"""
+    return jsonify({"active": _active_list(), "server_time": time.time()})
+
+
+@app.route("/api/slots")
+def api_slots():
+    """llama.cpp 백엔드의 /slots 상태 프록시 (슬롯별 실시간 진행)"""
+    result = {}
+    seen = set()
+    for pname, pcfg in router.config.get("providers", {}).items():
+        base = pcfg.get("base_url")
+        if not base or pcfg.get("type") != "openai_compatible" or base in seen:
+            continue
+        seen.add(base)
+        try:
+            r = requests.get(f"{base}/slots", timeout=3)
+            result[base] = r.json() if r.status_code == 200 else {"error": f"http_{r.status_code}"}
+        except Exception as e:
+            result[base] = {"error": str(e)}
+    return jsonify({"backend": result})
 
 
 @app.route("/api/logs")
@@ -288,9 +372,10 @@ def _build_response(result, model, cached=False):
     })
 
 
-def _log_request(model, task_type, cached=False, error=False):
+def _log_request(model, task_type, cached=False, error=False, elapsed_ms=0, tokens=0):
     entry = {"time": datetime.now().isoformat(), "model": model,
-             "task_type": task_type, "cached": cached, "error": error}
+             "task_type": task_type, "cached": cached, "error": error,
+             "elapsed_ms": elapsed_ms, "tokens": tokens}
     request_log.append(entry)
     if len(request_log) > MAX_LOG:
         request_log.pop(0)
@@ -298,9 +383,9 @@ def _log_request(model, task_type, cached=False, error=False):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5020))
-    print(f"LLM Router v2 running on http://0.0.0.0:{port}")
+    print(f"LLM Router v3 running on http://0.0.0.0:{port}")
     print(f"  Meta-router: qwen3.8 (always-on)")
     print(f"  Models: qwen3-coder (coding), qwq (math), qwen2.5vl (vision)")
     print(f"  Voice: STT(faster-whisper) → Router → TTS(edge-tts)")
     print(f"  VRAM: 96GB managed, qwen3.8 resident")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
