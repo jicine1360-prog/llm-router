@@ -263,6 +263,91 @@ print(' '.join(s.text for s in segments))
 
 
 # ============================================================
+# 원격 파일 복사 (다른 서버에서 scp/rsync로 가져오기)
+# ============================================================
+@app.route("/v1/files/fetch", methods=["POST"])
+def files_fetch():
+    """다른 서버에서 파일을 복사해온다.
+    
+    요청:
+    {
+        "source": "user@host:/path/to/file.xlsx",
+        "dest": "/home/hoony/downloads/",
+        "method": "scp"  # or "rsync"
+    }
+    """
+    data = request.get_json()
+    if not data or "source" not in data:
+        return jsonify({"error": "source required (user@host:/path)"}), 400
+    
+    source = data["source"]
+    dest = data.get("dest", "/home/hoony/downloads/")
+    method = data.get("method", "scp")
+    timeout = data.get("timeout", 300)
+    
+    # dest 디렉터리 생성
+    os.makedirs(dest, exist_ok=True)
+    
+    # 보안: source에 shell 메타문자 차단
+    import shlex
+    if any(c in source for c in [';', '|', '&', '$', '`', '(', ')']):
+        return jsonify({"error": "Invalid characters in source"}), 400
+    
+    if method == "rsync":
+        cmd = ["rsync", "-avz", "--progress", source, dest]
+    else:
+        cmd = ["scp", "-o", "StrictHostKeyChecking=no", source, dest]
+    
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout
+        )
+        if result.returncode == 0:
+            # 복사된 파일 목록
+            files = os.listdir(dest)
+            return jsonify({
+                "status": "success",
+                "method": method,
+                "source": source,
+                "dest": dest,
+                "files": files,
+                "output": result.stdout[-500:] if result.stdout else "",
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "method": method,
+                "source": source,
+                "error": result.stderr[-500:] if result.stderr else "unknown error",
+            }), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"status": "error", "error": f"Timeout after {timeout}s"}), 504
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/v1/files/list", methods=["GET"])
+def files_list():
+    """복사된 파일 목록"""
+    dest = request.args.get("path", "/home/hoony/downloads/")
+    if not os.path.isdir(dest):
+        return jsonify({"error": f"Directory not found: {dest}"}), 404
+    files = []
+    for f in os.listdir(dest):
+        fp = os.path.join(dest, f)
+        if os.path.isfile(fp):
+            st = os.stat(fp)
+            files.append({
+                "name": f,
+                "size": st.st_size,
+                "size_mb": round(st.st_size / 1024 / 1024, 2),
+                "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
+            })
+    files.sort(key=lambda x: x["modified"], reverse=True)
+    return jsonify({"path": dest, "count": len(files), "files": files})
+
+
+# ============================================================
 # 모니터링 엔드포인트
 # ============================================================
 @app.route("/api/status")
